@@ -1830,7 +1830,8 @@ public class SnapshotResiliencyTests extends OpenSearchTestCase {
                     null,
                     emptyMap(),
                     new RemoteDirectoryFactory(() -> repositoriesService),
-                    new ExtensionPrincipalsRegistry(new HashMap<>()));
+                    new ExtensionPrincipalsRegistry(new HashMap<>())
+                );
                 final RecoverySettings recoverySettings = new RecoverySettings(settings, clusterSettings);
                 snapshotShardsService = new SnapshotShardsService(
                     settings,
