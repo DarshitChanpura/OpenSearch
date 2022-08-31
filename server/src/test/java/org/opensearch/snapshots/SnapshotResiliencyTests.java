@@ -166,6 +166,7 @@ import org.opensearch.env.NodeEnvironment;
 import org.opensearch.env.TestEnvironment;
 import org.opensearch.gateway.MetaStateService;
 import org.opensearch.gateway.TransportNodesListGatewayStartedShards;
+import org.opensearch.identity.ExtensionPrincipalsRegistry;
 import org.opensearch.index.Index;
 import org.opensearch.index.IndexingPressureService;
 import org.opensearch.index.analysis.AnalysisRegistry;
@@ -1828,8 +1829,8 @@ public class SnapshotResiliencyTests extends OpenSearchTestCase {
                     emptyMap(),
                     null,
                     emptyMap(),
-                    new RemoteDirectoryFactory(() -> repositoriesService)
-                );
+                    new RemoteDirectoryFactory(() -> repositoriesService),
+                    new ExtensionPrincipalsRegistry(new HashMap<>()));
                 final RecoverySettings recoverySettings = new RecoverySettings(settings, clusterSettings);
                 snapshotShardsService = new SnapshotShardsService(
                     settings,

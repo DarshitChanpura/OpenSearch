@@ -97,6 +97,7 @@ import org.opensearch.env.ShardLock;
 import org.opensearch.env.ShardLockObtainFailedException;
 import org.opensearch.gateway.MetaStateService;
 import org.opensearch.gateway.MetadataStateFormat;
+import org.opensearch.identity.ExtensionPrincipalsRegistry;
 import org.opensearch.index.Index;
 import org.opensearch.index.IndexModule;
 import org.opensearch.index.IndexNotFoundException;
@@ -160,17 +161,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -228,6 +219,8 @@ public class IndicesService extends AbstractLifecycleComponent
      * The node's settings.
      */
     private final Settings settings;
+
+    private final ExtensionPrincipalsRegistry extensionPrincipalsRegistry;
     private final PluginsService pluginsService;
     private final ExtensionsOrchestrator extensionsOrchestrator;
     private final NodeEnvironment nodeEnv;
@@ -298,8 +291,8 @@ public class IndicesService extends AbstractLifecycleComponent
         Map<String, IndexStorePlugin.DirectoryFactory> directoryFactories,
         ValuesSourceRegistry valuesSourceRegistry,
         Map<String, IndexStorePlugin.RecoveryStateFactory> recoveryStateFactories,
-        RemoteDirectoryFactory remoteDirectoryFactory
-    ) {
+        RemoteDirectoryFactory remoteDirectoryFactory,
+        ExtensionPrincipalsRegistry extensionPrincipalsRegistry) {
         this.settings = settings;
         this.threadPool = threadPool;
         this.pluginsService = pluginsService;
@@ -394,6 +387,7 @@ public class IndicesService extends AbstractLifecycleComponent
         this.allowExpensiveQueries = ALLOW_EXPENSIVE_QUERIES.get(clusterService.getSettings());
         clusterService.getClusterSettings().addSettingsUpdateConsumer(ALLOW_EXPENSIVE_QUERIES, this::setAllowExpensiveQueries);
         this.remoteDirectoryFactory = remoteDirectoryFactory;
+        this.extensionPrincipalsRegistry = extensionPrincipalsRegistry;
     }
 
     private static final String DANGLING_INDICES_UPDATE_THREAD_NAME = "DanglingIndices#updateTask";
