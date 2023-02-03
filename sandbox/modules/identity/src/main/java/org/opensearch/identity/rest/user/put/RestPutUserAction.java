@@ -63,7 +63,7 @@ public class RestPutUserAction extends BaseRestHandler {
      *     }
      *   ]
      * }
-     *
+     * ````
      */
     @Override
     public RestChannelConsumer prepareRequest(RestRequest request, NodeClient client) throws IOException {
