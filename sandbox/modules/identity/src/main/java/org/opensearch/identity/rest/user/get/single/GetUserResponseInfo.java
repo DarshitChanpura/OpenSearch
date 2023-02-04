@@ -76,6 +76,7 @@ public class GetUserResponseInfo extends TransportResponse implements Writeable,
         args -> List.of((String) args[0])
     );
 
+    @SuppressWarnings("unchecked")
     public static final ConstructingObjectParser<GetUserResponseInfo, Void> PARSER = new ConstructingObjectParser<>(
         "get_user_response_info",
         true,
