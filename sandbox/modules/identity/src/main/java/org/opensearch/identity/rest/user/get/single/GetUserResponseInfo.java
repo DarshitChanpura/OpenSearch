@@ -76,7 +76,7 @@ public class GetUserResponseInfo extends TransportResponse implements Writeable,
         args -> List.of((String) args[0])
     );
 
-    static final ConstructingObjectParser<GetUserResponseInfo, Void> PARSER = new ConstructingObjectParser<>(
+    public static final ConstructingObjectParser<GetUserResponseInfo, Void> PARSER = new ConstructingObjectParser<>(
         "get_user_response_info",
         true,
         args -> new GetUserResponseInfo((String) args[0], (Map<String, String>) args[1], (List<String>) args[2])
