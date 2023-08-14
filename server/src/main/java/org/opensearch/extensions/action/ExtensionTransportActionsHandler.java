@@ -171,7 +171,7 @@ public class ExtensionTransportActionsHandler {
             inProgressFuture.orTimeout(ExtensionsManager.EXTENSION_REQUEST_WAIT_TIMEOUT, TimeUnit.SECONDS).join();
         } catch (CompletionException e) {
             if (e.getCause() instanceof TimeoutException) {
-                logger.info("No response from extension to request.");
+                logger.info("No response from extension to request 2.");
             }
             if (e.getCause() instanceof RuntimeException) {
                 throw (RuntimeException) e.getCause();
@@ -234,7 +234,7 @@ public class ExtensionTransportActionsHandler {
             inProgressFuture.orTimeout(ExtensionsManager.EXTENSION_REQUEST_WAIT_TIMEOUT, TimeUnit.SECONDS).join();
         } catch (CompletionException e) {
             if (e.getCause() instanceof TimeoutException) {
-                logger.info("No response from extension to request.");
+                logger.info("No response from extension to request 3.");
             }
             if (e.getCause() instanceof RuntimeException) {
                 throw (RuntimeException) e.getCause();
@@ -298,7 +298,7 @@ public class ExtensionTransportActionsHandler {
             inProgressFuture.orTimeout(ExtensionsManager.EXTENSION_REQUEST_WAIT_TIMEOUT, TimeUnit.SECONDS).join();
         } catch (CompletionException e) {
             if (e.getCause() instanceof TimeoutException) {
-                logger.info("No response from extension to request.");
+                logger.info("No response from extension to request 4.");
             }
             if (e.getCause() instanceof RuntimeException) {
                 throw (RuntimeException) e.getCause();

@@ -209,7 +209,7 @@ public class RestSendToExtensionAction extends BaseRestHandler {
 
             @Override
             public void handleResponse(RestExecuteOnExtensionResponse response) {
-                logger.info("Received response from extension: {}", response.getStatus());
+                logger.info("Received response from extension 22: {}", response.getStatus());
                 restExecuteOnExtensionResponse.setStatus(response.getStatus());
                 restExecuteOnExtensionResponse.setContentType(response.getContentType());
                 restExecuteOnExtensionResponse.setContent(response.getContent());
@@ -271,7 +271,7 @@ public class RestSendToExtensionAction extends BaseRestHandler {
             Throwable cause = e.getCause();
             if (cause instanceof TimeoutException) {
                 return channel -> channel.sendResponse(
-                    new BytesRestResponse(RestStatus.REQUEST_TIMEOUT, "No response from extension to request.")
+                    new BytesRestResponse(RestStatus.REQUEST_TIMEOUT, "No response from extension to request 6.")
                 );
             }
             if (e.getCause() instanceof RuntimeException) {
@@ -295,6 +295,7 @@ public class RestSendToExtensionAction extends BaseRestHandler {
             e.getValue().stream().forEach(v -> restResponse.addHeader(e.getKey(), v));
         });
 
+        logger.info("Reached post send Request: ", discoveryExtensionNode.getName());
         return channel -> channel.sendResponse(restResponse);
     }
 }

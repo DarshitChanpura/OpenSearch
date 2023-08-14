@@ -384,7 +384,7 @@ public class ExtensionsManager {
             public void onFailure(Exception e) {
                 extensionIdMap.remove(extension.getId());
                 if (e.getCause() instanceof ConnectTransportException) {
-                    logger.info("No response from extension to request.", e);
+                    logger.info("No response from extension to request 1.", e);
                     throw (ConnectTransportException) e.getCause();
                 } else if (e.getCause() instanceof RuntimeException) {
                     throw (RuntimeException) e.getCause();

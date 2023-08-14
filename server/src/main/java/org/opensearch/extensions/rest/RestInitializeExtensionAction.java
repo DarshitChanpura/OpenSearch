@@ -165,11 +165,11 @@ public class RestInitializeExtensionAction extends BaseRestHandler {
             Throwable cause = e.getCause();
             if (cause instanceof TimeoutException) {
                 return channel -> channel.sendResponse(
-                    new BytesRestResponse(RestStatus.REQUEST_TIMEOUT, "No response from extension to request.")
+                    new BytesRestResponse(RestStatus.REQUEST_TIMEOUT, "No response from extension to request 5.")
                 );
             } else if (cause instanceof ConnectTransportException || cause instanceof RuntimeException) {
                 return channel -> channel.sendResponse(
-                    new BytesRestResponse(RestStatus.REQUEST_TIMEOUT, "Connection failed with the extension.")
+                    new BytesRestResponse(RestStatus.REQUEST_TIMEOUT, "Connection failed with the extension 6.")
                 );
             }
             if (e.getCause() instanceof Error) {
