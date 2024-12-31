@@ -8,7 +8,7 @@
 
 package org.opensearch.index.compositeindex.datacube.startree.fileformats.meta;
 
-import org.apache.lucene.codecs.lucene99.Lucene99Codec;
+import org.apache.lucene.codecs.lucene912.Lucene912Codec;
 import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
@@ -42,6 +42,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -73,12 +74,12 @@ public class StarTreeMetadataTests extends OpenSearchTestCase {
         SegmentInfo segmentInfo = new SegmentInfo(
             directory,
             Version.LATEST,
-            Version.LUCENE_9_11_0,
+            Version.LUCENE_9_12_0,
             "test_segment",
             6,
             false,
             false,
-            new Lucene99Codec(),
+            new Lucene912Codec(),
             new HashMap<>(),
             UUID.randomUUID().toString().substring(0, 16).getBytes(StandardCharsets.UTF_8),
             new HashMap<>(),
@@ -181,8 +182,11 @@ public class StarTreeMetadataTests extends OpenSearchTestCase {
         assertEquals(starTreeMetadata.getNumberOfNodes(), numberOfNodes);
         assertNotNull(starTreeMetadata);
 
-        for (int i = 0; i < dimensionsOrder.size(); i++) {
-            assertEquals(dimensionsOrder.get(i).getField(), starTreeMetadata.getDimensionFields().get(i));
+        assertEquals(dimensionsOrder.size(), starTreeMetadata.dimensionFieldsToDocValuesMap.size());
+        int k = 0;
+        for (Map.Entry<String, DocValuesType> entry : starTreeMetadata.dimensionFieldsToDocValuesMap.entrySet()) {
+            assertEquals(dimensionsOrder.get(k).getField(), entry.getKey());
+            k++;
         }
 
         assertEquals(starTreeField.getMetrics().size(), starTreeMetadata.getMetrics().size());

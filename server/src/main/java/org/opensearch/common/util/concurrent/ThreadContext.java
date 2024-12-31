@@ -411,8 +411,9 @@ public final class ThreadContext implements Writeable {
     /**
      * Returns the persistent header for the given key or <code>null</code> if not present - persistent headers cannot be stashed
      */
-    public Object getPersistent(String key) {
-        return threadLocal.get().persistentHeaders.get(key);
+    @SuppressWarnings("unchecked") // (T)object
+    public <T> T getPersistent(String key) {
+        return (T) threadLocal.get().persistentHeaders.get(key);
     }
 
     /**
@@ -545,6 +546,15 @@ public final class ThreadContext implements Writeable {
      */
     public void updateResponseHeader(final String key, final String value, final Function<String, String> uniqueValue) {
         threadLocal.set(threadLocal.get().putResponse(key, value, uniqueValue, maxWarningHeaderCount, maxWarningHeaderSize, true));
+    }
+
+    /**
+     * Remove the {@code value} for the specified {@code key}.
+     *
+     * @param key         the header name
+     */
+    public void removeResponseHeader(final String key) {
+        threadLocal.get().responseHeaders.remove(key);
     }
 
     /**

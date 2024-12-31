@@ -33,6 +33,7 @@ package org.opensearch.snapshots;
 
 import org.opensearch.Version;
 import org.opensearch.action.admin.cluster.snapshots.create.CreateSnapshotResponse;
+import org.opensearch.action.admin.cluster.snapshots.restore.RestoreSnapshotRequestBuilder;
 import org.opensearch.action.admin.cluster.state.ClusterStateResponse;
 import org.opensearch.action.index.IndexRequestBuilder;
 import org.opensearch.action.search.SearchRequest;
@@ -61,6 +62,7 @@ import org.opensearch.core.common.Strings;
 import org.opensearch.core.common.bytes.BytesReference;
 import org.opensearch.core.common.unit.ByteSizeUnit;
 import org.opensearch.core.compress.CompressorRegistry;
+import org.opensearch.core.rest.RestStatus;
 import org.opensearch.core.xcontent.DeprecationHandler;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.core.xcontent.XContentBuilder;
@@ -506,6 +508,26 @@ public abstract class AbstractSnapshotIntegTestCase extends OpenSearchIntegTestC
         return snapshotInfo;
     }
 
+    protected void restoreSnapshot(
+        String repositoryName,
+        String snapshotName,
+        String indexName,
+        String restoredIndexName,
+        Settings indexSettings
+    ) {
+        logger.info("--> restoring snapshot [{}] of {} in [{}] to [{}]", snapshotName, indexName, repositoryName, restoredIndexName);
+        RestoreSnapshotRequestBuilder builder = client().admin()
+            .cluster()
+            .prepareRestoreSnapshot(repositoryName, snapshotName)
+            .setWaitForCompletion(false)
+            .setRenamePattern(indexName)
+            .setRenameReplacement(restoredIndexName);
+        if (indexSettings != null) {
+            builder.setIndexSettings(indexSettings);
+        }
+        assertEquals(builder.get().status(), RestStatus.ACCEPTED);
+    }
+
     protected void createIndexWithRandomDocs(String indexName, int docCount) throws InterruptedException {
         createIndex(indexName);
         ensureGreen();
@@ -663,6 +685,16 @@ public abstract class AbstractSnapshotIntegTestCase extends OpenSearchIntegTestC
             }, statePredicate);
             future.get(30L, TimeUnit.SECONDS);
         }
+    }
+
+    protected ActionFuture<AcknowledgedResponse> deleteSnapshotBlockedOnClusterManager(String repoName, String snapshotName) {
+        blockClusterManagerFromDeletingIndexNFile(repoName);
+        return deleteSnapshot(repoName, snapshotName);
+    }
+
+    protected ActionFuture<AcknowledgedResponse> deleteSnapshot(String repoName, String snapshotName) {
+        logger.info("--> Deleting snapshot [{}] to repo [{}]", snapshotName, repoName);
+        return clusterAdmin().prepareDeleteSnapshot(repoName, snapshotName).execute();
     }
 
     protected ActionFuture<CreateSnapshotResponse> startFullSnapshotBlockedOnDataNode(String snapshotName, String repoName, String dataNode)
