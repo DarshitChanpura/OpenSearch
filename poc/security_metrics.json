@@ -1,0 +1,16 @@
+{
+  "alias": {
+    "avg_secret": 2.9898,
+    "avg_control": 8.6446,
+    "gap": 5.6547,
+    "detected": 8,
+    "total": 8
+  },
+  "mv": {
+    "avg_secret": 6.9551,
+    "avg_control": 6.9553,
+    "gap": 0.0002,
+    "detected": 0,
+    "total": 8
+  }
+}

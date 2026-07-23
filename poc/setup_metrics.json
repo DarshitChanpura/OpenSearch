@@ -1,0 +1,30 @@
+{
+  "source": {
+    "docs": 200000,
+    "index_seconds": 7.65,
+    "docs_per_sec": 26144.0,
+    "store_bytes": 58327814
+  },
+  "mv": {
+    "docs": 20000,
+    "refresh_seconds": 1.83,
+    "docs_per_sec": 10942.0,
+    "store_bytes": 5977747
+  },
+  "alias": {
+    "target": "patients-source",
+    "filter": {
+      "term": {
+        "dept": "cardiology"
+      }
+    },
+    "store_bytes": 0,
+    "note": "zero storage; queries execute on full source index"
+  },
+  "derived": {
+    "visible_fraction": 0.1,
+    "mv_storage_overhead_pct_of_source": 10.25,
+    "mv_vs_visible_ratio": 1.025,
+    "write_amplification_with_mv": 1.1
+  }
+}

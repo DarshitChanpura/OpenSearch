@@ -1,0 +1,219 @@
+{
+  "term_keyword": {
+    "desc": "term filter on category (exact keyword)",
+    "counts": {
+      "alias_postfilter": 394,
+      "mv": 394,
+      "alias_prefilter": 394
+    },
+    "latency": {
+      "alias_postfilter": {
+        "iters": 200,
+        "p50": 2.768,
+        "p95": 3.331,
+        "p99": 3.772,
+        "mean": 2.814
+      },
+      "mv": {
+        "iters": 200,
+        "p50": 1.688,
+        "p95": 1.959,
+        "p99": 2.295,
+        "mean": 1.724
+      },
+      "alias_prefilter": {
+        "iters": 200,
+        "p50": 1.891,
+        "p95": 2.155,
+        "p99": 2.563,
+        "mean": 1.914
+      }
+    }
+  },
+  "match_fulltext_bm25": {
+    "desc": "match query on content (BM25 scoring \u2014 where the oracle lives)",
+    "counts": {
+      "alias_postfilter": 7858,
+      "mv": 7858,
+      "alias_prefilter": 7858
+    },
+    "latency": {
+      "alias_postfilter": {
+        "iters": 200,
+        "p50": 2.44,
+        "p95": 2.802,
+        "p99": 3.135,
+        "mean": 2.462
+      },
+      "mv": {
+        "iters": 200,
+        "p50": 1.405,
+        "p95": 1.603,
+        "p99": 1.758,
+        "mean": 1.412
+      },
+      "alias_prefilter": {
+        "iters": 200,
+        "p50": 2.77,
+        "p95": 3.028,
+        "p99": 3.651,
+        "mean": 2.794
+      }
+    }
+  },
+  "match_phrase_prefix": {
+    "desc": "match_phrase_prefix on content (PrefixOracle query type)",
+    "counts": {
+      "alias_postfilter": 770,
+      "mv": 770,
+      "alias_prefilter": 770
+    },
+    "latency": {
+      "alias_postfilter": {
+        "iters": 200,
+        "p50": 2.021,
+        "p95": 2.301,
+        "p99": 2.609,
+        "mean": 2.047
+      },
+      "mv": {
+        "iters": 200,
+        "p50": 1.404,
+        "p95": 1.579,
+        "p99": 1.659,
+        "mean": 1.417
+      },
+      "alias_prefilter": {
+        "iters": 200,
+        "p50": 1.723,
+        "p95": 1.898,
+        "p99": 2.014,
+        "mean": 1.724
+      }
+    }
+  },
+  "range_numeric": {
+    "desc": "range query on value",
+    "counts": {
+      "alias_postfilter": 10000,
+      "mv": 10000,
+      "alias_prefilter": 10000
+    },
+    "latency": {
+      "alias_postfilter": {
+        "iters": 200,
+        "p50": 2.174,
+        "p95": 2.409,
+        "p99": 2.845,
+        "mean": 2.197
+      },
+      "mv": {
+        "iters": 200,
+        "p50": 1.163,
+        "p95": 1.358,
+        "p99": 1.483,
+        "mean": 1.178
+      },
+      "alias_prefilter": {
+        "iters": 200,
+        "p50": 1.865,
+        "p95": 2.03,
+        "p99": 2.289,
+        "mean": 1.872
+      }
+    }
+  },
+  "terms_agg": {
+    "desc": "terms aggregation on category",
+    "counts": {
+      "alias_postfilter": 10000,
+      "mv": 10000,
+      "alias_prefilter": 10000
+    },
+    "latency": {
+      "alias_postfilter": {
+        "iters": 200,
+        "p50": 1.304,
+        "p95": 1.546,
+        "p99": 1.623,
+        "mean": 1.323
+      },
+      "mv": {
+        "iters": 200,
+        "p50": 1.075,
+        "p95": 1.339,
+        "p99": 1.603,
+        "mean": 1.099
+      },
+      "alias_prefilter": {
+        "iters": 200,
+        "p50": 1.044,
+        "p95": 1.202,
+        "p99": 1.273,
+        "mean": 1.037
+      }
+    }
+  },
+  "cardinality_agg": {
+    "desc": "cardinality aggregation on user_id",
+    "counts": {
+      "alias_postfilter": 10000,
+      "mv": 10000,
+      "alias_prefilter": 10000
+    },
+    "latency": {
+      "alias_postfilter": {
+        "iters": 200,
+        "p50": 1.476,
+        "p95": 1.656,
+        "p99": 1.714,
+        "mean": 1.477
+      },
+      "mv": {
+        "iters": 200,
+        "p50": 1.349,
+        "p95": 1.529,
+        "p99": 1.616,
+        "mean": 1.35
+      },
+      "alias_prefilter": {
+        "iters": 200,
+        "p50": 1.366,
+        "p95": 1.506,
+        "p99": 1.544,
+        "mean": 1.365
+      }
+    }
+  },
+  "bool_filter_combo": {
+    "desc": "bool: match content + range filter (mixed scoring+filter)",
+    "counts": {
+      "alias_postfilter": 6255,
+      "mv": 6255,
+      "alias_prefilter": 6255
+    },
+    "latency": {
+      "alias_postfilter": {
+        "iters": 200,
+        "p50": 2.21,
+        "p95": 2.47,
+        "p99": 2.845,
+        "mean": 2.23
+      },
+      "mv": {
+        "iters": 200,
+        "p50": 1.315,
+        "p95": 1.457,
+        "p99": 1.552,
+        "mean": 1.314
+      },
+      "alias_prefilter": {
+        "iters": 200,
+        "p50": 1.929,
+        "p95": 2.11,
+        "p99": 2.365,
+        "mean": 1.933
+      }
+    }
+  }
+}
