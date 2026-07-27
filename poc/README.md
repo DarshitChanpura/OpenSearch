@@ -40,9 +40,28 @@ python3 poc/setup.py          # build source + materialized view; storage/indexi
 python3 poc/security_demo.py  # ExactOracle: materialized view leaks 0/8
 python3 poc/bench.py          # search latency by query type @ 200k docs
 python3 poc/scale.py          # storage + latency scaling curve (50k .. 800k)
+python3 poc/verify.py         # ground-truth correctness gate (see below)
 ```
 
 Each writes a `*_metrics.json` next to the scripts; `RESULTS.md` summarizes them.
+
+## Verifying correctness (`verify.py`)
+
+The latency benchmarks rely on BM25 *scores*. `verify.py` deliberately does **not**
+trust scores: it reads the raw Lucene term-dictionary `doc_freq` (the exact signal
+the ExactOracle exploits) directly via `_termvectors`, and asserts four invariants,
+exiting non-zero on any failure:
+
+1. The MV physically holds only the visible (cardiology) subset — zero hidden docs.
+2. Each hidden-only secret term has `df > 0` in the source term dictionary but
+   `df == 0` in the MV — proven from the term dictionary, no scoring involved.
+3. **Negative control:** a *visible* term is present in *both* dictionaries — so
+   invariant 2 is real isolation, not just "the MV is smaller."
+4. Source `df` strictly exceeds MV `df` for every leak term (the leak magnitude).
+
+Two independent measurement paths — score-based (`security_demo.py`) and
+structure-based (`verify.py`) — agreeing is what rules out a harness that fools
+itself. A representative passing run is shown at the bottom of this file.
 
 ## Files
 
@@ -54,6 +73,7 @@ Each writes a `*_metrics.json` next to the scripts; `RESULTS.md` summarizes them
 | `security_demo.py` | local ExactOracle BM25 side-channel test through the view |
 | `bench.py` | p50/p95/p99 latency across 7 query types (view vs source baseline) |
 | `scale.py` | rebuilds corpus at 5 sizes; storage + latency scaling for extrapolation |
+| `verify.py` | ground-truth correctness gate: reads raw term-dictionary `df` (score-independent); fails non-zero if isolation breaks |
 
 ## Model / caveats
 
@@ -64,3 +84,39 @@ Each writes a `*_metrics.json` next to the scripts; `RESULTS.md` summarizes them
 - Single shard, force-merged, warm cache: isolates the corpus-size effect but
   omits shard fan-out and cold-cache behavior. Extrapolations in `RESULTS.md`
   are order-of-magnitude.
+
+## Representative `verify.py` run (200k corpus)
+
+```
+source=200000 docs, MV=20000 docs (10.0% visible)
+
+Invariant 1 — MV contains only the visible (cardiology) subset
+  [PASS] MV has ZERO non-cardiology docs  — non-cardiology docs in MV = 0
+  [PASS] MV size ≈ 10% of source  — ratio = 0.100
+
+Invariant 2 — secret-term document frequency (raw term dictionary)
+    hunter2        source_df=3368   mv_df=0
+    acmemerger     source_df=3387   mv_df=0
+    infarction     source_df=3389   mv_df=0
+    confidential   source_df=3346   mv_df=0
+    quarterly      source_df=3304   mv_df=0
+    projections    source_df=3284   mv_df=0
+    revenue        source_df=3469   mv_df=0
+    diagnosis      source_df=3460   mv_df=0
+  [PASS] every secret term is PRESENT in source term dict (df>0)  — min source df = 3284
+  [PASS] every secret term is ABSENT from MV term dict (df==0)  — max mv df = 0
+
+Invariant 3 — negative control: a visible-doc term is in BOTH dicts
+    visible term 'ikadd': source_df=1351  mv_df=149
+  [PASS] visible term present in source (df>0)
+  [PASS] visible term ALSO present in MV (df>0)
+
+Invariant 4 — hidden docs inflate source df above MV df (the leak)
+  [PASS] secret-term source df >> MV df for all leak terms  — 8/8
+
+ RESULT: all 7 invariants hold. Confirmed WITHOUT relying on BM25 scores.
+```
+
+On the **filtered-alias branch**, the same `verify.py` builds the MV directly for
+the term-dictionary comparison (the alias itself keeps zero copy) — so both
+branches share the identical, mechanism-agnostic correctness gate.
