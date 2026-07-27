@@ -1,0 +1,24 @@
+{
+  "mechanism": "materialized_view",
+  "blurb": "separate physical index holding only the visible subset",
+  "source": {
+    "docs": 200000,
+    "index_seconds": 6.9,
+    "docs_per_sec": 28974.0,
+    "store_bytes": 58355648
+  },
+  "view": {
+    "name": "patients-mv-cardiology",
+    "has_physical_copy": true,
+    "docs": 20000,
+    "build_seconds": 1.76,
+    "docs_per_sec": 11379.0,
+    "store_bytes": 5977928
+  },
+  "derived": {
+    "visible_fraction": 0.1,
+    "view_storage_overhead_pct_of_source": 10.24,
+    "view_vs_visible_ratio": 1.024,
+    "write_amplification_with_view": 1.1
+  }
+}

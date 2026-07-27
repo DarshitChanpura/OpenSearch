@@ -1,0 +1,10 @@
+{
+  "mechanism": "materialized_view",
+  "result": {
+    "avg_secret": 6.9551,
+    "avg_control": 6.9553,
+    "gap": 0.0002,
+    "detected": 0,
+    "total": 8
+  }
+}
