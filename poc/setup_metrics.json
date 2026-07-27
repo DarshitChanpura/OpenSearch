@@ -1,0 +1,23 @@
+{
+  "mechanism": "filtered_alias",
+  "blurb": "term-filtered alias over the full source index (no copy)",
+  "source": {
+    "docs": 200000,
+    "index_seconds": 6.83,
+    "docs_per_sec": 29269.0,
+    "store_bytes": 36049015
+  },
+  "view": {
+    "name": "cardiology-view",
+    "has_physical_copy": false,
+    "docs": 0,
+    "build_seconds": 0.0,
+    "docs_per_sec": 0,
+    "store_bytes": 0
+  },
+  "derived": {
+    "view_storage_overhead_pct_of_source": 0.0,
+    "write_amplification_with_view": 1.0,
+    "note": "no physical copy; view is zero-storage and always fresh"
+  }
+}

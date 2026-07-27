@@ -1,0 +1,166 @@
+{
+  "mechanism": "filtered_alias",
+  "queries": {
+    "term_keyword": {
+      "desc": "term filter on category (exact keyword)",
+      "counts": {
+        "baseline_source": 394,
+        "view": 394
+      },
+      "latency": {
+        "baseline_source": {
+          "iters": 200,
+          "p50": 1.134,
+          "p95": 1.318,
+          "p99": 1.413,
+          "mean": 1.144
+        },
+        "view": {
+          "iters": 200,
+          "p50": 1.176,
+          "p95": 1.395,
+          "p99": 1.456,
+          "mean": 1.177
+        }
+      }
+    },
+    "match_fulltext_bm25": {
+      "desc": "match query on content (BM25 scoring \u2014 where the oracle lives)",
+      "counts": {
+        "baseline_source": 7858,
+        "view": 7858
+      },
+      "latency": {
+        "baseline_source": {
+          "iters": 200,
+          "p50": 1.695,
+          "p95": 1.824,
+          "p99": 1.88,
+          "mean": 1.696
+        },
+        "view": {
+          "iters": 200,
+          "p50": 1.663,
+          "p95": 1.796,
+          "p99": 1.854,
+          "mean": 1.665
+        }
+      }
+    },
+    "match_phrase_prefix": {
+      "desc": "match_phrase_prefix on content (PrefixOracle query type)",
+      "counts": {
+        "baseline_source": 770,
+        "view": 770
+      },
+      "latency": {
+        "baseline_source": {
+          "iters": 200,
+          "p50": 1.334,
+          "p95": 1.469,
+          "p99": 1.547,
+          "mean": 1.339
+        },
+        "view": {
+          "iters": 200,
+          "p50": 1.333,
+          "p95": 1.483,
+          "p99": 1.573,
+          "mean": 1.334
+        }
+      }
+    },
+    "range_numeric": {
+      "desc": "range query on value",
+      "counts": {
+        "baseline_source": 10000,
+        "view": 10000
+      },
+      "latency": {
+        "baseline_source": {
+          "iters": 200,
+          "p50": 1.639,
+          "p95": 1.817,
+          "p99": 1.913,
+          "mean": 1.648
+        },
+        "view": {
+          "iters": 200,
+          "p50": 1.608,
+          "p95": 1.769,
+          "p99": 1.872,
+          "mean": 1.622
+        }
+      }
+    },
+    "terms_agg": {
+      "desc": "terms aggregation on category",
+      "counts": {
+        "baseline_source": 10000,
+        "view": 10000
+      },
+      "latency": {
+        "baseline_source": {
+          "iters": 200,
+          "p50": 0.614,
+          "p95": 0.748,
+          "p99": 0.784,
+          "mean": 0.619
+        },
+        "view": {
+          "iters": 200,
+          "p50": 0.626,
+          "p95": 0.772,
+          "p99": 0.813,
+          "mean": 0.633
+        }
+      }
+    },
+    "cardinality_agg": {
+      "desc": "cardinality aggregation on user_id",
+      "counts": {
+        "baseline_source": 10000,
+        "view": 10000
+      },
+      "latency": {
+        "baseline_source": {
+          "iters": 200,
+          "p50": 1.019,
+          "p95": 1.158,
+          "p99": 1.209,
+          "mean": 1.019
+        },
+        "view": {
+          "iters": 200,
+          "p50": 1.008,
+          "p95": 1.116,
+          "p99": 1.182,
+          "mean": 1.005
+        }
+      }
+    },
+    "bool_filter_combo": {
+      "desc": "bool: match content + range filter (mixed scoring+filter)",
+      "counts": {
+        "baseline_source": 6255,
+        "view": 6255
+      },
+      "latency": {
+        "baseline_source": {
+          "iters": 200,
+          "p50": 1.779,
+          "p95": 1.941,
+          "p99": 1.968,
+          "mean": 1.781
+        },
+        "view": {
+          "iters": 200,
+          "p50": 1.77,
+          "p95": 1.91,
+          "p99": 1.977,
+          "mean": 1.776
+        }
+      }
+    }
+  }
+}

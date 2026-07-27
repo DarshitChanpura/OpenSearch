@@ -1,0 +1,10 @@
+{
+  "mechanism": "filtered_alias",
+  "result": {
+    "avg_secret": 2.9898,
+    "avg_control": 8.6446,
+    "gap": 5.6547,
+    "detected": 8,
+    "total": 8
+  }
+}
