@@ -43,6 +43,7 @@ python3 poc/security_demo.py  # ExactOracle: filtered alias leaks 8/8
 python3 poc/bench.py          # search latency by query type @ 200k docs
 python3 poc/scale.py          # storage + latency scaling curve (50k .. 800k)
 python3 poc/verify.py         # ground-truth correctness gate (see below)
+python3 poc/complex_filter.py # demo: a compound DLS predicate honored by both views
 ```
 
 Each writes a `*_metrics.json` next to the scripts; `RESULTS.md` summarizes them.
@@ -78,6 +79,7 @@ itself. A representative passing run is shown at the bottom of this file.
 | `bench.py` | p50/p95/p99 latency across 7 query types (view vs source baseline) |
 | `scale.py` | rebuilds corpus at 5 sizes; storage + latency scaling for extrapolation |
 | `verify.py` | ground-truth correctness gate: reads raw term-dictionary `df` (score-independent); fails non-zero if isolation breaks |
+| `complex_filter.py` | demo: a compound predicate (`dept=cardiology OR (dept=emergency AND value<30000)`) honored identically by the alias and the MV, with the mutable-field freshness trade-off made visible |
 
 ## Model / caveats
 
