@@ -32,6 +32,8 @@
 
 package org.opensearch.search.internal;
 
+import org.opensearch.Version;
+import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.core.common.Strings;
 import org.opensearch.core.common.io.stream.StreamInput;
@@ -53,19 +55,67 @@ import java.util.Objects;
 @PublicApi(since = "1.0.0")
 public final class AliasFilter implements Writeable, Rewriteable<AliasFilter> {
 
+    /**
+     * Where the alias filter is applied in the query pipeline.
+     * <p>
+     * {@link #POST_FILTER} is the historical behavior: the filter is added as a
+     * post-collection filter, so statistics and scoring still run over every
+     * document in the shard. This is the mode any pre-3.8 node speaks over the
+     * wire, and it is the default for every code path today.
+     * <p>
+     * {@link #PRE_FILTER} is a placeholder for the filter-aware-alias work: the
+     * filter is intended to be pushed into statistics / term-enumeration so the
+     * BM25 side-channel does not leak hidden-doc {@code df}. This enum only
+     * <em>records</em> the choice today &mdash; no code path acts on it yet.
+     * The behavior lands in a follow-up change; see the design notes on
+     * filter-aware aliases.
+     *
+     * @opensearch.experimental
+     */
+    @ExperimentalApi
+    public enum Enforcement implements Writeable {
+        POST_FILTER,
+        PRE_FILTER;
+
+        public static Enforcement readFrom(StreamInput in) throws IOException {
+            return in.readEnum(Enforcement.class);
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            out.writeEnum(this);
+        }
+    }
+
+    /** First OpenSearch version that carries the {@link Enforcement} field on the wire. */
+    static final Version ENFORCEMENT_VERSION = Version.V_3_8_0;
+
     private final String[] aliases;
     private final QueryBuilder filter;
+    private final Enforcement enforcement;
 
     public static final AliasFilter EMPTY = new AliasFilter(null, Strings.EMPTY_ARRAY);
 
     public AliasFilter(QueryBuilder filter, String... aliases) {
+        this(filter, Enforcement.POST_FILTER, aliases);
+    }
+
+    public AliasFilter(QueryBuilder filter, Enforcement enforcement, String... aliases) {
         this.aliases = aliases == null ? Strings.EMPTY_ARRAY : aliases;
         this.filter = filter;
+        this.enforcement = enforcement == null ? Enforcement.POST_FILTER : enforcement;
     }
 
     public AliasFilter(StreamInput input) throws IOException {
         aliases = input.readStringArray();
         filter = input.readOptionalNamedWriteable(QueryBuilder.class);
+        // BWC: older nodes never write the enforcement field. Default to
+        // POST_FILTER (today's behavior) so mixed-version clusters keep working.
+        if (input.getVersion().onOrAfter(ENFORCEMENT_VERSION)) {
+            enforcement = input.readEnum(Enforcement.class);
+        } else {
+            enforcement = Enforcement.POST_FILTER;
+        }
     }
 
     @Override
@@ -74,7 +124,7 @@ public final class AliasFilter implements Writeable, Rewriteable<AliasFilter> {
         if (queryBuilder != null) {
             QueryBuilder rewrite = Rewriteable.rewrite(queryBuilder, context);
             if (rewrite != queryBuilder) {
-                return new AliasFilter(rewrite, aliases);
+                return new AliasFilter(rewrite, enforcement, aliases);
             }
         }
         return this;
@@ -84,6 +134,10 @@ public final class AliasFilter implements Writeable, Rewriteable<AliasFilter> {
     public void writeTo(StreamOutput out) throws IOException {
         out.writeStringArray(aliases);
         out.writeOptionalNamedWriteable(filter);
+        if (out.getVersion().onOrAfter(ENFORCEMENT_VERSION)) {
+            out.writeEnum(enforcement);
+        }
+        // Pre-3.8 receivers implicitly treat the field as POST_FILTER.
     }
 
     /**
@@ -101,21 +155,36 @@ public final class AliasFilter implements Writeable, Rewriteable<AliasFilter> {
         return filter;
     }
 
+    /**
+     * Returns where the alias filter should be applied in the query pipeline. Always
+     * non-null; defaults to {@link Enforcement#POST_FILTER} for backward compatibility.
+     * No code path acts on {@link Enforcement#PRE_FILTER} yet &mdash; this is scaffolding
+     * for the filter-aware-alias work.
+     */
+    public Enforcement getEnforcement() {
+        return enforcement;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         AliasFilter that = (AliasFilter) o;
-        return Arrays.equals(aliases, that.aliases) && Objects.equals(filter, that.filter);
+        return Arrays.equals(aliases, that.aliases)
+            && Objects.equals(filter, that.filter)
+            && enforcement == that.enforcement;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(Arrays.hashCode(aliases), filter);
+        return Objects.hash(Arrays.hashCode(aliases), filter, enforcement);
     }
 
     @Override
     public String toString() {
-        return "AliasFilter{" + "aliases=" + Arrays.toString(aliases) + ", filter=" + filter + '}';
+        return "AliasFilter{aliases=" + Arrays.toString(aliases)
+            + ", filter=" + filter
+            + ", enforcement=" + enforcement
+            + '}';
     }
 }
