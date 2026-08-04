@@ -39,6 +39,7 @@ import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.BoostQuery;
 import org.apache.lucene.search.Collector;
 import org.apache.lucene.search.CollectorManager;
+import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.FieldDoc;
 import org.apache.lucene.search.MatchNoDocsQuery;
 import org.apache.lucene.search.Query;
@@ -94,6 +95,7 @@ import org.opensearch.search.fetch.subphase.FetchFieldsContext;
 import org.opensearch.search.fetch.subphase.FetchSourceContext;
 import org.opensearch.search.fetch.subphase.ScriptFieldsContext;
 import org.opensearch.search.fetch.subphase.highlight.SearchHighlightContext;
+import org.opensearch.search.internal.AliasFilter;
 import org.opensearch.search.internal.ContextIndexSearcher;
 import org.opensearch.search.internal.PitReaderContext;
 import org.opensearch.search.internal.ReaderContext;
@@ -472,7 +474,18 @@ final class DefaultSearchContext extends SearchContext {
         }
 
         if (aliasFilter != null) {
-            filters.add(aliasFilter);
+            AliasFilter requestAliasFilter = request.getAliasFilter();
+            if (requestAliasFilter != null && requestAliasFilter.getEnforcement() == AliasFilter.Enforcement.PRE_FILTER) {
+                // Pre-filter enforcement: apply the alias filter before scoring by wrapping the user's
+                // query in a constant-score boolean query. Because scoring runs only over the docs that
+                // pass the filter, the BM25 collection statistics (N, df) naturally exclude hidden docs
+                // -- closing the side-channel that post-filtering (the default) leaves open.
+                query = new ConstantScoreQuery(
+                    new BooleanQuery.Builder().add(query, Occur.MUST).add(aliasFilter, Occur.FILTER).build()
+                );
+            } else {
+                filters.add(aliasFilter);
+            }
         }
 
         if (sliceBuilder != null) {
