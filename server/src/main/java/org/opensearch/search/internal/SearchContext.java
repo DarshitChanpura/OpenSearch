@@ -384,6 +384,32 @@ public abstract class SearchContext implements Releasable {
         return false;
     }
 
+    /**
+     * A visibility filter installed by a plugin (rather than derived from a request alias) over which BM25
+     * collection/term statistics should be computed. This is the seam that lets an access-control plugin
+     * (e.g. document-level security) obtain the same visible-subset scoring that a {@code pre_filter} alias
+     * gets, without going through the alias machinery: the plugin already injects its restriction as a query
+     * at search time, so it can additionally hand that restriction here to scope BM25 statistics to the
+     * documents the caller is allowed to read.
+     * <p>
+     * When non-null, {@link org.opensearch.search.internal.ContextIndexSearcher} computes statistics over
+     * this filter's matching (live) documents, exactly as it does for an alias filter. It takes precedence
+     * over {@link #aliasFilter()} as the statistics filter. Defaults to {@code null} (no plugin filter).
+     */
+    public Query filteredStatsFilter() {
+        return null;
+    }
+
+    /**
+     * Installs a plugin-provided visibility filter for filtered BM25 statistics (see
+     * {@link #filteredStatsFilter()}). Implementations that support the seam override this to store the
+     * filter and start reporting {@code true} from {@link #useFilteredStatistics()}. The default
+     * implementation is a no-op so contexts that do not support the seam are unaffected.
+     */
+    public SearchContext filteredStatsFilter(Query filter) {
+        return this;
+    }
+
     public abstract SearchContext parsedQuery(ParsedQuery query);
 
     public abstract ParsedQuery parsedQuery();

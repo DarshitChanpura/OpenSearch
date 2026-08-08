@@ -239,6 +239,9 @@ final class DefaultSearchContext extends SearchContext {
     private Query query;
     private ParsedQuery postFilter;
     private Query aliasFilter;
+    // Plugin-installed visibility filter for filtered BM25 statistics (see filteredStatsFilter()). When set,
+    // it makes useFilteredStatistics() report true even without a pre_filter alias.
+    private Query filteredStatsFilter;
     private int[] docIdsToLoad;
     private int docsIdsToLoadFrom;
     private int docsIdsToLoadSize;
@@ -858,10 +861,27 @@ final class DefaultSearchContext extends SearchContext {
     }
 
     @Override
+    public Query filteredStatsFilter() {
+        return filteredStatsFilter;
+    }
+
+    @Override
+    public SearchContext filteredStatsFilter(Query filter) {
+        this.filteredStatsFilter = filter;
+        return this;
+    }
+
+    @Override
     public boolean useFilteredStatistics() {
-        // Filtered BM25 statistics apply only when an alias filter is present, the alias is enforced as a
-        // pre_filter, and the filtered_stats scoring sub-behavior has been opted into. Otherwise we keep
-        // whole-shard statistics (post_filter, or pre_filter with the default constant_score behavior).
+        // Case 1 -- plugin seam: an access-control plugin (e.g. DLS) installed a visibility filter directly
+        // (see filteredStatsFilter()). The plugin's own configuration is the opt-in, so this path does not
+        // require the alias machinery or the JVM gate; the filter alone scopes statistics to the visible subset.
+        if (filteredStatsFilter != null) {
+            return true;
+        }
+        // Case 2 -- pre_filter alias: filtered BM25 statistics apply only when an alias filter is present, the
+        // alias is enforced as a pre_filter, and the filtered_stats scoring sub-behavior has been opted into.
+        // Otherwise we keep whole-shard statistics (post_filter, or pre_filter with the default constant_score).
         if (aliasFilter == null || filteredStatisticsEnabled() == false) {
             return false;
         }

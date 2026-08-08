@@ -60,12 +60,14 @@ public class DfsPhase {
             Map<String, CollectionStatistics> fieldStatistics = new HashMap<>();
             Map<Term, TermStatistics> stats = new HashMap<>();
             // Filter-aware aliases (A6): when filtered_stats is enabled, the per-shard statistics that this dfs phase
-            // ships to the coordinator must ALSO be restricted to the alias-filter (visible) subset -- otherwise the
-            // coordinator would sum whole-shard numbers and the aggregated statistics would no longer reflect the
-            // visible subset that filtered_stats is meant to score over.
+            // ships to the coordinator must ALSO be restricted to the visible subset -- otherwise the coordinator
+            // would sum whole-shard numbers and the aggregated statistics would no longer reflect the visible subset
+            // that filtered_stats is meant to score over. The visible subset is defined by either the request's
+            // alias filter or a plugin-installed filter (SearchContext.filteredStatsFilter()); useFilteredStatistics()
+            // already accounts for both, so we gate on it alone.
             // We delegate the actual statistics computation to the ContextIndexSearcher, which applies the filtered
             // overrides while its aggregatedDfs is still null (the dfs phase runs before AggregatedDfs is assigned).
-            final boolean filteredStatistics = context.useFilteredStatistics() && context.aliasFilter() != null;
+            final boolean filteredStatistics = context.useFilteredStatistics();
             final ContextIndexSearcher contextSearcher = context.searcher();
             IndexSearcher searcher = new IndexSearcher(context.searcher().getIndexReader()) {
                 @Override

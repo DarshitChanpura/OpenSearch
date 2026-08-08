@@ -127,8 +127,10 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
     private SearchContext searchContext;
 
     /**
-     * Per-segment bitsets of the documents that match {@link SearchContext#aliasFilter()}, used to compute
-     * BM25 statistics over only the "visible" subset when {@link SearchContext#useFilteredStatistics()} is true.
+     * Per-segment bitsets of the documents that match the statistics filter (a plugin-installed
+     * {@link SearchContext#filteredStatsFilter()} if present, otherwise {@link SearchContext#aliasFilter()}),
+     * used to compute BM25 statistics over only the "visible" subset when
+     * {@link SearchContext#useFilteredStatistics()} is true.
      * Built lazily on first use and cached for the life of the searcher. Indexed by {@link LeafReaderContext#ord}.
      * A {@code null} entry means "no visible docs in that segment". The whole array being {@code null} means the
      * bitsets have not been built yet.
@@ -619,11 +621,22 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
     }
 
     private boolean useFilteredStatistics() {
-        return searchContext != null && searchContext.useFilteredStatistics() && searchContext.aliasFilter() != null;
+        return searchContext != null && searchContext.useFilteredStatistics() && statsFilter() != null;
     }
 
     /**
-     * Lazily builds and caches the per-segment bitsets of documents matching {@link SearchContext#aliasFilter()}.
+     * The filter defining the "visible" subset over which BM25 statistics are computed. A plugin-installed
+     * filter ({@link SearchContext#filteredStatsFilter()}) takes precedence over the request's alias filter,
+     * so an access-control plugin can scope scoring to the documents the caller may read even when no
+     * {@code pre_filter} alias is involved.
+     */
+    private Query statsFilter() {
+        final Query pluginFilter = searchContext.filteredStatsFilter();
+        return pluginFilter != null ? pluginFilter : searchContext.aliasFilter();
+    }
+
+    /**
+     * Lazily builds and caches the per-segment bitsets of documents matching {@link #statsFilter()}.
      * These represent the "visible" subset over which filtered BM25 statistics are computed. Only live documents are
      * included so the counts match what a physically-filtered index would report.
      */
@@ -633,9 +646,9 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
         }
         final List<LeafReaderContext> leaves = getIndexReader().leaves();
         final BitSet[] bitSets = new BitSet[leaves.size()];
-        final Query aliasFilter = searchContext.aliasFilter();
+        final Query visibilityFilter = statsFilter();
         // COMPLETE_NO_SCORES: we only need the matching doc ids, not scores.
-        final Weight weight = createWeight(rewrite(aliasFilter), ScoreMode.COMPLETE_NO_SCORES, 1f);
+        final Weight weight = createWeight(rewrite(visibilityFilter), ScoreMode.COMPLETE_NO_SCORES, 1f);
         for (LeafReaderContext ctx : leaves) {
             final ScorerSupplier scorerSupplier = weight.scorerSupplier(ctx);
             if (scorerSupplier == null) {
