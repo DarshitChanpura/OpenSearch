@@ -9,6 +9,7 @@
 package org.opensearch.aliases;
 
 import org.opensearch.action.admin.indices.alias.IndicesAliasesRequest.AliasActions;
+import org.opensearch.action.bulk.BulkRequestBuilder;
 import org.opensearch.action.search.SearchResponse;
 import org.opensearch.action.search.SearchType;
 import org.opensearch.action.support.WriteRequest.RefreshPolicy;
@@ -45,15 +46,27 @@ public class FilterAwareAliasIT extends OpenSearchIntegTestCase {
     /** Build a corpus where RESTRICTED_TERM appears only in filtered-out docs, plus a single visible
      *  sample doc that contains both the restricted term and the absent term. */
     private void buildCorpus() throws Exception {
+        buildCorpus(200);
+    }
+
+    /**
+     * As {@link #buildCorpus()}, with the number of restricted documents under the caller's control. The visible
+     * subset stays at 21 documents, so {@code restrictedDocs} sets how selective the view is.
+     */
+    private void buildCorpus(int restrictedDocs) throws Exception {
         assertAcked(
             prepareCreate(INDEX).setMapping("dept", "type=keyword", "content", "type=text")
                 .setSettings(Settings.builder().put("index.number_of_shards", 1).put("index.number_of_replicas", 0))
         );
 
         // Many restricted docs carrying the restricted term -> raises its corpus-wide df.
-        for (int i = 0; i < 200; i++) {
-            client().prepareIndex(INDEX).setSource("dept", RESTRICTED_DEPT, "content", "filler " + RESTRICTED_TERM + " noise" + i).get();
+        BulkRequestBuilder bulk = client().prepareBulk();
+        for (int i = 0; i < restrictedDocs; i++) {
+            bulk.add(
+                client().prepareIndex(INDEX).setSource("dept", RESTRICTED_DEPT, "content", "filler " + RESTRICTED_TERM + " noise" + i)
+            );
         }
+        assertFalse(bulk.get().hasFailures());
         // A handful of visible docs (without the restricted term of their own).
         for (int i = 0; i < 20; i++) {
             client().prepareIndex(INDEX).setSource("dept", VISIBLE_DEPT, "content", "cardio note " + i).get();
@@ -184,7 +197,20 @@ public class FilterAwareAliasIT extends OpenSearchIntegTestCase {
      * duration of the assertions and clear it afterwards.
      */
     public void testFilteredStatisticsMatchPhysicallyFilteredIndex() throws Exception {
-        buildCorpus();
+        assertFilteredStatisticsMatchPhysicallyFilteredIndex(200);   // 21 visible of 221 documents
+    }
+
+    /**
+     * The same equivalence, on a highly selective view: 21 visible of 2,021 documents, about 1%. Cost scales with
+     * the size of the view rather than the size of the index, so a selective view exercises a very different ratio
+     * of visible to total documents, and the statistics must come out identical either way.
+     */
+    public void testFilteredStatisticsMatchPhysicallyFilteredIndexForSelectiveView() throws Exception {
+        assertFilteredStatisticsMatchPhysicallyFilteredIndex(2000);
+    }
+
+    private void assertFilteredStatisticsMatchPhysicallyFilteredIndex(int restrictedDocs) throws Exception {
+        buildCorpus(restrictedDocs);
         addAlias("fs_pre", "pre_filter");
 
         // Build a physical "visible-only" index: reindex just the cardiology docs. This is the
@@ -223,6 +249,213 @@ public class FilterAwareAliasIT extends OpenSearchIntegTestCase {
             } else {
                 System.setProperty(prop, previous);
             }
+        }
+    }
+
+    /**
+     * Visible-subset statistics are summed per segment, so a multi-segment shard exercises a different code path than
+     * the effectively single-segment corpora the other tests build. This indexes in batches with a refresh after each
+     * so the shard holds many segments, then asserts the same equivalence: filtered_stats must equal a physically
+     * filtered index. Without this, dropping or double-counting one segment's contribution goes undetected.
+     */
+    public void testFilteredStatisticsAcrossManySegments() throws Exception {
+        assertAcked(
+            prepareCreate(INDEX).setMapping("dept", "type=keyword", "content", "type=text")
+                .setSettings(
+                    // The tiered merge policy collapses tiny segments immediately, which would make this test
+                    // silently single-segment. A high segments-per-tier and a 1-byte floor keep the batches apart.
+                    Settings.builder()
+                        .put("index.number_of_shards", 1)
+                        .put("index.number_of_replicas", 0)
+                        .put("index.merge.policy.segments_per_tier", 100)
+                        .put("index.merge.policy.max_merge_at_once", 2)
+                        .put("index.merge.policy.floor_segment", "1b")
+                )
+        );
+        assertAcked(
+            prepareCreate("patients_visible_only").setMapping("dept", "type=keyword", "content", "type=text")
+                .setSettings(Settings.builder().put("index.number_of_shards", 1).put("index.number_of_replicas", 0))
+        );
+        // 10 batches, each flushed to its own segment by an explicit refresh
+        for (int batch = 0; batch < 10; batch++) {
+            BulkRequestBuilder bulk = client().prepareBulk();
+            for (int i = 0; i < 50; i++) {
+                int id = batch * 50 + i;
+                bulk.add(
+                    client().prepareIndex(INDEX).setSource("dept", RESTRICTED_DEPT, "content", "filler " + RESTRICTED_TERM + " n" + id)
+                );
+                bulk.add(client().prepareIndex(INDEX).setSource("dept", VISIBLE_DEPT, "content", "cardio note " + id));
+                bulk.add(client().prepareIndex("patients_visible_only").setSource("dept", VISIBLE_DEPT, "content", "cardio note " + id));
+            }
+            assertFalse(bulk.get().hasFailures());
+            refresh(INDEX);
+            refresh("patients_visible_only");
+        }
+        client().prepareIndex(INDEX)
+            .setSource("dept", VISIBLE_DEPT, "content", "sample " + RESTRICTED_TERM + " " + ABSENT_TERM)
+            .setRefreshPolicy(RefreshPolicy.IMMEDIATE)
+            .get();
+        client().prepareIndex("patients_visible_only")
+            .setSource("dept", VISIBLE_DEPT, "content", "sample " + RESTRICTED_TERM + " " + ABSENT_TERM)
+            .setRefreshPolicy(RefreshPolicy.IMMEDIATE)
+            .get();
+
+        int segments = client().admin().indices().prepareSegments(INDEX).get().getIndices().get(INDEX).getShards().get(0).getShards()[0]
+            .getSegments()
+            .size();
+        assertTrue("corpus must span several segments for this test to mean anything, got " + segments, segments > 1);
+
+        addAlias("fs_multiseg", "pre_filter");
+        final String prop = "opensearch.filter_aware_alias.filtered_stats";
+        final String previous = System.getProperty(prop);
+        try {
+            System.setProperty(prop, "true");
+            float aliasScore = sampleScore("fs_multiseg", RESTRICTED_TERM);
+            float physicalScore = sampleScore("patients_visible_only", RESTRICTED_TERM);
+            assertTrue("sample found via filtered-stats alias", aliasScore > 0f);
+            assertEquals(
+                "filtered_stats must equal the physically-filtered index across " + segments + " segments",
+                physicalScore,
+                aliasScore,
+                0.01f
+            );
+        } finally {
+            if (previous == null) {
+                System.clearProperty(prop);
+            } else {
+                System.setProperty(prop, previous);
+            }
+        }
+    }
+
+    /**
+     * A term that exists in the index but in no visible document must return no hits, not fail the shard. Visible
+     * statistics for such a term are zero, and reporting that to Lucene as "absent" is not equivalent: absent means
+     * absent from the segment, so TermQuery.TermWeight leaves its scorer null while still building a scorer supplier
+     * from the term's real postings, and the supplier throws when asked. Any tenant searching for a term they do not
+     * have hits this, so it needs a test rather than only the equivalence assertions above.
+     */
+    public void testTermPresentInIndexButNotInViewReturnsNoHits() throws Exception {
+        // Own index, not the shared one: this test writes thousands of documents and toggles the same global
+        // filtered_stats property as its neighbours, so keeping its corpus separate stops it perturbing them.
+        final String index = "patients_view_absent";
+        assertAcked(
+            prepareCreate(index).setMapping("dept", "type=keyword", "content", "type=text")
+                .setSettings(Settings.builder().put("index.number_of_shards", 1).put("index.number_of_replicas", 0))
+        );
+        assertAcked(
+            client().admin()
+                .indices()
+                .prepareAliases()
+                .addAliasAction(
+                    AliasActions.add()
+                        .index(index)
+                        .alias("fs_absent")
+                        .filter(QueryBuilders.termQuery("dept", VISIBLE_DEPT))
+                        .enforcement("pre_filter")
+                )
+        );
+        final String prop = "opensearch.filter_aware_alias.filtered_stats";
+        final String previous = System.getProperty(prop);
+        try {
+            System.setProperty(prop, "true");
+            // hidden_only_term is planted exclusively in filtered-out documents, so it is present in the index and
+            // has zero visible occurrences. The corpus is spread over many segments and the view is large enough that
+            // Lucene builds a bulk scorer for the term: that is the path which asks the scorer supplier for a scorer,
+            // and a single-segment toy corpus never reaches it. size > 0 is required for the same reason.
+            for (int batch = 0; batch < 8; batch++) {
+                BulkRequestBuilder bulk = client().prepareBulk();
+                for (int i = 0; i < 200; i++) {
+                    bulk.add(client().prepareIndex(index).setSource("dept", VISIBLE_DEPT, "content", "cardio bulk " + i));
+                    bulk.add(client().prepareIndex(index).setSource("dept", RESTRICTED_DEPT, "content", "hidden_only_term " + i));
+                }
+                assertFalse(bulk.get().hasFailures());
+                refresh(index);
+            }
+            SearchResponse resp = client().prepareSearch("fs_absent")
+                .setQuery(QueryBuilders.matchQuery("content", "hidden_only_term"))
+                .setSize(10)
+                .get();
+            assertEquals("a term with no visible occurrences must match nothing", 0, resp.getHits().getHits().length);
+            assertEquals("and must not fail the shard", 0, resp.getFailedShards());
+
+            // Same shape with the absent term alongside a visible one, which is the multi-clause path.
+            SearchResponse mixed = client().prepareSearch("fs_absent")
+                .setQuery(QueryBuilders.matchQuery("content", "cardio hidden_only_term"))
+                .setSize(10)
+                .get();
+            assertEquals("mixed visible and view-absent terms must not fail the shard", 0, mixed.getFailedShards());
+            assertTrue("the visible term should still match", mixed.getHits().getHits().length > 0);
+
+            // And under dfs, where per-shard statistics are summed on the coordinator. The floor the local path
+            // substitutes must not be what the dfs phase reports, or the aggregated docFreq would move with the
+            // number of shards holding the term in filtered-out documents.
+            SearchResponse dfs = client().prepareSearch("fs_absent")
+                .setSearchType(SearchType.DFS_QUERY_THEN_FETCH)
+                .setQuery(QueryBuilders.matchQuery("content", "hidden_only_term"))
+                .setSize(10)
+                .get();
+            assertEquals("dfs must not fail the shard either", 0, dfs.getFailedShards());
+            assertEquals("and must still match nothing", 0, dfs.getHits().getHits().length);
+        } finally {
+            if (previous == null) {
+                System.clearProperty(prop);
+            } else {
+                System.setProperty(prop, previous);
+            }
+        }
+    }
+
+    /**
+     * Small-view guardrail: filtered statistics cost O(visible postings) to build, so above a configured
+     * visible-doc budget the request falls back to the default constant_score behavior instead of paying that
+     * cost. Asserts both sides of the switch on the same corpus and alias: with a generous budget the sample
+     * scores with real BM25 (not 1.0), and with a budget below the visible-subset size every hit scores exactly
+     * 1.0 -- still leak-free, just unranked.
+     */
+    public void testFilteredStatisticsGuardrailFallsBackToConstantScore() throws Exception {
+        buildCorpus();
+        addAlias("fs_guard", "pre_filter");
+
+        final String gate = "opensearch.filter_aware_alias.filtered_stats";
+        final String budget = "opensearch.filter_aware_alias.filtered_stats.max_visible_docs";
+        final String previousGate = System.getProperty(gate);
+        final String previousBudget = System.getProperty(budget);
+        try {
+            System.setProperty(gate, "true");
+
+            // Budget well above the ~21 visible docs: filtered_stats applies, so the restricted-only term is
+            // scored with real (visible-subset) BM25 rather than flattened.
+            System.setProperty(budget, "1000000");
+            float rankedScore = sampleScore("fs_guard", RESTRICTED_TERM);
+            assertTrue("sample found with filtered_stats in budget", rankedScore > 0f);
+            assertNotEquals(
+                "with filtered_stats applied the score should be real BM25, not the constant_score 1.0",
+                1.0f,
+                rankedScore,
+                0.0001f
+            );
+
+            // Budget below the visible-subset size: the guardrail trips and we fall back to constant_score,
+            // which scores every hit exactly 1.0.
+            System.setProperty(budget, "1");
+            float guardedScore = sampleScore("fs_guard", RESTRICTED_TERM);
+            assertEquals("guardrail should fall back to constant_score (flat 1.0)", 1.0f, guardedScore, 0.0001f);
+
+            // The fallback is still leak-free: a term confined to filtered-out docs is indistinguishable from
+            // a term that exists nowhere.
+            assertEquals("fallback stays leak-free", sampleScore("fs_guard", ABSENT_TERM), guardedScore, 0.0001f);
+        } finally {
+            restoreProperty(gate, previousGate);
+            restoreProperty(budget, previousBudget);
+        }
+    }
+
+    private static void restoreProperty(String key, String previous) {
+        if (previous == null) {
+            System.clearProperty(key);
+        } else {
+            System.setProperty(key, previous);
         }
     }
 

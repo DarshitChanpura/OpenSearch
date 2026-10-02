@@ -68,13 +68,13 @@ import org.apache.lucene.search.similarities.Similarity;
 import org.apache.lucene.util.BitSet;
 import org.apache.lucene.util.BitSetIterator;
 import org.apache.lucene.util.Bits;
-import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.SparseFixedBitSet;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.lease.Releasable;
 import org.opensearch.common.lucene.Lucene;
 import org.opensearch.common.lucene.search.TopDocsAndMaxScore;
 import org.opensearch.core.tasks.TaskCancelledException;
+import org.opensearch.index.cache.filteredstats.FilteredStatsCache;
 import org.opensearch.lucene.util.CombinedBitSet;
 import org.opensearch.search.DocValueFormat;
 import org.opensearch.search.SearchHits;
@@ -135,6 +135,12 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
      */
     private BitSet[] visibleDocsPerSegment;
     private boolean visibleDocsInitialized = false;
+    /**
+     * The rewritten alias-filter query used to key {@link FilteredStatsCache} entries. Set when the visible bitsets
+     * are built so the collection/term-statistics lookups reuse the exact same key. Rewriting once per request also
+     * keeps the key stable across the three statistics methods.
+     */
+    private Query visibleDocsFilterKey;
 
     public ContextIndexSearcher(
         IndexReader reader,
@@ -577,7 +583,18 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
         // The third case -- the query phase of a dfs search (aggregatedDfs != null) -- must NOT recompute: it has to
         // read the pre-aggregated (already-filtered) stats, so it falls through to the aggregatedDfs branch below.
         if (useFilteredStatistics() && aggregatedDfs == null) {
-            return filteredTermStatistics(term);
+            TermStatistics visible = filteredTermStatistics(term);
+            if (visible == null) {
+                // No visible document contains the term. We cannot return null: to Lucene null means the term is
+                // absent from the index, and TermQuery.TermWeight then leaves its SimScorer null while still building
+                // a scorer supplier from the term's real postings, which throws as soon as the supplier is asked for a
+                // scorer. Hand back the smallest statistics TermStatistics permits instead. Nothing visible can match
+                // the term, so the value never reaches a score, and being a constant it says nothing about how many
+                // hidden documents hold the term. The dfs phase must not take this substitution, which is why it calls
+                // visibleSubsetTermStatistics rather than this method.
+                return new TermStatistics(term.bytes(), 1, 1);
+            }
+            return visible;
         }
         if (aggregatedDfs == null) {
             // we are either executing the dfs phase or the search_type doesn't include the dfs phase.
@@ -589,6 +606,20 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
             return super.termStatistics(term, docFreq, totalTermFreq);
         }
         return termStatistics;
+    }
+
+    /**
+     * Visible-subset term statistics for the dfs phase, which aggregates per-shard numbers on the coordinator. This
+     * returns null when the term occurs in no visible document, so a shard that holds the term only in filtered-out
+     * documents contributes nothing to the aggregate. {@link #termStatistics(Term, int, long)} substitutes a floor for
+     * that null because it feeds local scoring, and the two must not be confused: using the floor here would make the
+     * aggregated docFreq depend on how many shards hold the term invisibly.
+     */
+    public TermStatistics visibleSubsetTermStatistics(Term term, int docFreq, long totalTermFreq) throws IOException {
+        if (useFilteredStatistics() && aggregatedDfs == null) {
+            return filteredTermStatistics(term);
+        }
+        return super.termStatistics(term, docFreq, totalTermFreq);
     }
 
     @Override
@@ -623,9 +654,12 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
     }
 
     /**
-     * Lazily builds and caches the per-segment bitsets of documents matching {@link SearchContext#aliasFilter()}.
+     * Lazily builds the per-segment bitsets of documents matching {@link SearchContext#aliasFilter()}.
      * These represent the "visible" subset over which filtered BM25 statistics are computed. Only live documents are
-     * included so the counts match what a physically-filtered index would report.
+     * included so the counts match what a physically-filtered index would report. Per-segment bitsets are served from
+     * {@link FilteredStatsCache} when available (keyed by segment + filter, evicted on segment close), so the
+     * O(corpus) filter scan is paid once per (segment, filter) rather than once per query; the result array is also
+     * memoized on this searcher for reuse across the terms of a single request.
      */
     private synchronized BitSet[] getVisibleDocsPerSegment() throws IOException {
         if (visibleDocsInitialized) {
@@ -633,33 +667,31 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
         }
         final List<LeafReaderContext> leaves = getIndexReader().leaves();
         final BitSet[] bitSets = new BitSet[leaves.size()];
-        final Query aliasFilter = searchContext.aliasFilter();
+        // Rewrite once and reuse as the FilteredStatsCache key for the bitset and the statistics lookups, so the key
+        // is identical across all three methods within a request.
+        final Query aliasFilter = rewrite(searchContext.aliasFilter());
+        this.visibleDocsFilterKey = aliasFilter;
         // COMPLETE_NO_SCORES: we only need the matching doc ids, not scores.
-        final Weight weight = createWeight(rewrite(aliasFilter), ScoreMode.COMPLETE_NO_SCORES, 1f);
+        final Weight weight = createWeight(aliasFilter, ScoreMode.COMPLETE_NO_SCORES, 1f);
+        final FilteredStatsCache cache = filteredStatsCache();
         for (LeafReaderContext ctx : leaves) {
-            final ScorerSupplier scorerSupplier = weight.scorerSupplier(ctx);
-            if (scorerSupplier == null) {
-                continue;
-            }
-            final Scorer scorer = scorerSupplier.get(Long.MAX_VALUE);
-            if (scorer == null) {
-                continue;
-            }
-            final FixedBitSet bitSet = new FixedBitSet(ctx.reader().maxDoc());
-            final DocIdSetIterator iterator = scorer.iterator();
-            final Bits liveDocs = ctx.reader().getLiveDocs();
-            for (int doc = iterator.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = iterator.nextDoc()) {
-                if (liveDocs == null || liveDocs.get(doc)) {
-                    bitSet.set(doc);
-                }
-            }
-            if (bitSet.cardinality() > 0) {
-                bitSets[ctx.ord] = bitSet;
+            if (cache != null) {
+                bitSets[ctx.ord] = cache.getOrComputeVisibleBitSet(
+                    ctx,
+                    aliasFilter,
+                    () -> FilteredStatsCache.computeVisibleBitSet(weight, ctx)
+                );
+            } else {
+                bitSets[ctx.ord] = FilteredStatsCache.computeVisibleBitSet(weight, ctx);
             }
         }
         this.visibleDocsPerSegment = bitSets;
         this.visibleDocsInitialized = true;
         return bitSets;
+    }
+
+    private FilteredStatsCache filteredStatsCache() {
+        return searchContext == null ? null : searchContext.filteredStatsCache();
     }
 
     /**
@@ -671,35 +703,30 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
     private CollectionStatistics filteredCollectionStatistics(String field) throws IOException {
         final BitSet[] visibleDocs = getVisibleDocsPerSegment();
         final List<LeafReaderContext> leaves = getIndexReader().leaves();
-        long docCount = 0;       // number of visible docs that have at least one term in this field
+        final FilteredStatsCache cache = filteredStatsCache();
+        long docCount = 0;         // number of visible docs that have at least one term in this field
         long sumTotalTermFreq = 0; // total number of (visible) tokens in this field
-        long sumDocFreq = 0;     // sum over terms of the number of visible docs containing the term
+        long sumDocFreq = 0;       // sum over terms of the number of visible docs containing the term
 
         for (LeafReaderContext ctx : leaves) {
             final BitSet visible = visibleDocs[ctx.ord];
             if (visible == null) {
                 continue;
             }
-            final Terms terms = ctx.reader().terms(field);
-            if (terms == null) {
-                continue;
+            final long[] contribution;
+            if (cache != null) {
+                contribution = cache.getOrComputeFieldContribution(
+                    ctx,
+                    visibleDocsFilterKey,
+                    field,
+                    () -> FilteredStatsCache.computeFieldContribution(ctx, visible, field)
+                );
+            } else {
+                contribution = FilteredStatsCache.computeFieldContribution(ctx, visible, field);
             }
-            final TermsEnum termsEnum = terms.iterator();
-            final FixedBitSet docsWithField = new FixedBitSet(ctx.reader().maxDoc());
-            PostingsEnum postings = null;
-            while (termsEnum.next() != null) {
-                postings = termsEnum.postings(postings, PostingsEnum.FREQS);
-                int termDocFreq = 0;
-                for (int doc = postings.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = postings.nextDoc()) {
-                    if (visible.get(doc)) {
-                        termDocFreq++;
-                        sumTotalTermFreq += postings.freq();
-                        docsWithField.set(doc);
-                    }
-                }
-                sumDocFreq += termDocFreq;
-            }
-            docCount += docsWithField.cardinality();
+            docCount += contribution[0];
+            sumTotalTermFreq += contribution[1];
+            sumDocFreq += contribution[2];
         }
 
         if (docCount == 0) {
@@ -723,6 +750,7 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
     private TermStatistics filteredTermStatistics(Term term) throws IOException {
         final BitSet[] visibleDocs = getVisibleDocsPerSegment();
         final List<LeafReaderContext> leaves = getIndexReader().leaves();
+        final FilteredStatsCache cache = filteredStatsCache();
         long docFreq = 0;       // number of visible docs containing the term
         long totalTermFreq = 0; // sum of term frequencies over visible docs
 
@@ -731,31 +759,64 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
             if (visible == null) {
                 continue;
             }
-            final Terms terms = ctx.reader().terms(term.field());
-            if (terms == null) {
-                continue;
+            final long[] contribution;
+            if (cache != null) {
+                contribution = cache.getOrComputeTermContribution(
+                    ctx,
+                    visibleDocsFilterKey,
+                    term,
+                    () -> computeTermContribution(ctx, visible, term)
+                );
+            } else {
+                contribution = computeTermContribution(ctx, visible, term);
             }
-            final TermsEnum termsEnum = terms.iterator();
-            if (termsEnum.seekExact(term.bytes()) == false) {
-                continue;
-            }
-            final PostingsEnum postings = termsEnum.postings(null, PostingsEnum.FREQS);
-            for (int doc = postings.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = postings.nextDoc()) {
-                if (visible.get(doc)) {
-                    docFreq++;
-                    totalTermFreq += postings.freq();
-                }
+            if (contribution != null) {
+                docFreq += contribution[0];
+                totalTermFreq += contribution[1];
             }
         }
 
         if (docFreq == 0) {
-            // Term does not occur in any visible document. Returning null matches Lucene's contract for an absent
-            // term and, per TermQuery.TermWeight, results in no scoring contribution over the visible subset.
+            // The term occurs in no visible document, so it contributes nothing to the visible subset. Null says
+            // exactly that, and the dfs phase needs it: a shard holding the term only in filtered-out documents must
+            // add nothing to the coordinator's aggregate, or the aggregated docFreq would move with the placement of
+            // hidden documents. Callers that go on to score locally must not pass this null to Lucene; see
+            // termStatistics(Term, int, long).
             return null;
         }
         // TermStatistics requires totalTermFreq >= docFreq (each doc contributes at least one occurrence).
         totalTermFreq = Math.max(totalTermFreq, docFreq);
         return new TermStatistics(term.bytes(), docFreq, totalTermFreq);
+    }
+
+    /**
+     * Computes a single segment's {@code [docFreq, totalTermFreq]} contribution for a term over the visible subset,
+     * or {@code null} when the term occurs in no visible doc in this segment. Memoized per (segment, filter, term) by
+     * {@link FilteredStatsCache}.
+     */
+    private static long[] computeTermContribution(LeafReaderContext ctx, BitSet visible, Term term) throws IOException {
+        final Terms terms = ctx.reader().terms(term.field());
+        if (terms == null) {
+            return null;
+        }
+        final TermsEnum termsEnum = terms.iterator();
+        if (termsEnum.seekExact(term.bytes()) == false) {
+            return null;
+        }
+        final PostingsEnum postings = termsEnum.postings(null, PostingsEnum.FREQS);
+        // Leapfrog the term's postings against the visible bitset instead of scanning the postings linearly and
+        // testing each hit: the conjunction advances whichever side is behind, so skip lists do the work and the
+        // cost is O(min(visible, docFreq)) rather than O(docFreq). The more selective the view, the cheaper it gets.
+        final DocIdSetIterator visibleAndTerm = ConjunctionUtils.intersectIterators(
+            Arrays.asList(new BitSetIterator(visible, visible.approximateCardinality()), postings)
+        );
+        long docFreq = 0;
+        long totalTermFreq = 0;
+        for (int doc = visibleAndTerm.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = visibleAndTerm.nextDoc()) {
+            docFreq++;
+            totalTermFreq += postings.freq();
+        }
+        return docFreq == 0 ? null : new long[] { docFreq, totalTermFreq };
     }
 
     /**
