@@ -53,6 +53,7 @@ import org.opensearch.action.admin.indices.stats.StatusCounterStats;
 import org.opensearch.action.search.SearchRequestStats;
 import org.opensearch.action.search.SearchType;
 import org.opensearch.cluster.ClusterState;
+import org.opensearch.cluster.metadata.AliasMetadata;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
 import org.opensearch.cluster.node.DiscoveryNode;
@@ -115,6 +116,8 @@ import org.opensearch.index.IngestionPayloadDecoderFactory;
 import org.opensearch.index.MergeSchedulerConfig;
 import org.opensearch.index.ReplicationStats;
 import org.opensearch.index.analysis.AnalysisRegistry;
+import org.opensearch.index.cache.filteredstats.FilteredStatsCacheStats;
+import org.opensearch.index.cache.filteredstats.IndicesFilteredStatsCache;
 import org.opensearch.index.cache.request.ShardRequestCache;
 import org.opensearch.index.compositeindex.CompositeIndexSettings;
 import org.opensearch.index.engine.CommitStats;
@@ -436,6 +439,7 @@ public class IndicesService extends AbstractLifecycleComponent
     private final IndexScopedSettings indexScopedSettings;
     private final IndicesFieldDataCache indicesFieldDataCache;
     private final IndicesBitsetFilterCache indicesBitsetFilterCache;
+    private final IndicesFilteredStatsCache indicesFilteredStatsCache;
     private final CacheCleaner cacheCleaner;
     private final ThreadPool threadPool;
     private final CircuitBreakerService circuitBreakerService;
@@ -485,6 +489,7 @@ public class IndicesService extends AbstractLifecycleComponent
     private final Consumer<IndexShard> replicator;
     private final Function<ShardId, ReplicationStats> segmentReplicationStatsProvider;
     private volatile int maxSizeInRequestCache;
+    private volatile boolean requestCacheEnabled;
     private volatile int defaultMaxMergeAtOnce;
     private final StatusCounterStats statusCounterStats;
     private volatile List<SearchStatsContributor> searchStatsContributors = Collections.emptyList();
@@ -591,6 +596,10 @@ public class IndicesService extends AbstractLifecycleComponent
         this.cleanInterval = INDICES_CACHE_CLEAN_INTERVAL_SETTING.get(settings);
         this.cacheCleaner = new CacheCleaner(indicesFieldDataCache, logger, threadPool, this.cleanInterval);
         this.indicesBitsetFilterCache = new IndicesBitsetFilterCache(settings);
+        this.indicesFilteredStatsCache = new IndicesFilteredStatsCache(
+            settings,
+            circuitBreakerService.getBreaker(CircuitBreaker.FIELDDATA)
+        );
         this.metaStateService = metaStateService;
         this.engineFactoryProviders = engineFactoryProviders;
 
@@ -618,6 +627,7 @@ public class IndicesService extends AbstractLifecycleComponent
                         cacheCleaner,
                         indicesRequestCache,
                         indicesQueryCache,
+                        indicesFilteredStatsCache,
                         ingestionPayloadDecoderRegistry
                     );
                 } catch (IOException e) {
@@ -677,6 +687,9 @@ public class IndicesService extends AbstractLifecycleComponent
         this.maxSizeInRequestCache = INDICES_REQUEST_CACHE_MAX_SIZE_ALLOWED_IN_CACHE_SETTING.get(clusterService.getSettings());
         clusterService.getClusterSettings()
             .addSettingsUpdateConsumer(INDICES_REQUEST_CACHE_MAX_SIZE_ALLOWED_IN_CACHE_SETTING, this::setMaxSizeInRequestCache);
+        this.requestCacheEnabled = IndicesRequestCache.INDICES_REQUEST_CACHE_ENABLED_SETTING.get(clusterService.getSettings());
+        clusterService.getClusterSettings()
+            .addSettingsUpdateConsumer(IndicesRequestCache.INDICES_REQUEST_CACHE_ENABLED_SETTING, this::setRequestCacheEnabled);
 
         this.defaultMaxMergeAtOnce = CLUSTER_DEFAULT_INDEX_MAX_MERGE_AT_ONCE_SETTING.get(clusterService.getSettings());
         this.clusterMergeSchedulerConfig = new ClusterMergeSchedulerConfig(this);
@@ -893,6 +906,11 @@ public class IndicesService extends AbstractLifecycleComponent
      */
     public boolean awaitClose(long timeout, TimeUnit timeUnit) throws InterruptedException {
         return closeLatch.await(timeout, timeUnit);
+    }
+
+    /** Returns the size and activity of the node-level filtered statistics cache. */
+    public FilteredStatsCacheStats filteredStatsCacheStats() {
+        return indicesFilteredStatsCache.stats();
     }
 
     public NodeIndicesStats stats(CommonStatsFlags flags) {
@@ -1201,6 +1219,8 @@ public class IndicesService extends AbstractLifecycleComponent
             indexModule.addIndexOperationListener(operationListener);
         }
         pluginsService.onIndexModule(indexModule);
+        // After the plugins, so the node cache is the one every index uses.
+        indexModule.setIndicesFilteredStatsCache(indicesFilteredStatsCache);
         // Add tiered storage search listeners
         if (FeatureFlags.isEnabled(FeatureFlags.WRITABLE_WARM_INDEX_EXPERIMENTAL_FLAG)) {
             indexModule.addSearchOperationListener(new TieredStorageSearchSlowLog(idxSettings));
@@ -2074,6 +2094,10 @@ public class IndicesService extends AbstractLifecycleComponent
      * Can the shard request be cached at all?
      */
     public boolean canCache(ShardSearchRequest request, SearchContext context) {
+        if (requestCacheEnabled == false) {
+            return false;
+        }
+
         // Queries that create a scroll context cannot use the cache.
         // They modify the search context during their execution so using the cache
         // may invalidate the scroll for the next query.
@@ -2166,6 +2190,9 @@ public class IndicesService extends AbstractLifecycleComponent
                     request.source()
                 );
             }
+        } else if (requestCacheEnabled == false) {
+            // The cache got disabled while this search was running, so drop the entry it just added
+            indicesRequestCache.invalidate(new IndexShardCacheEntity(context.indexShard()), directoryReader, request.cacheKey());
         }
     }
 
@@ -2276,7 +2303,28 @@ public class IndicesService extends AbstractLifecycleComponent
         };
         IndexMetadata indexMetadata = state.metadata().index(index);
         String[] aliases = indexNameExpressionResolver.filteringAliases(state, index, resolvedExpressions);
-        return new AliasFilter(ShardSearchRequest.parseAliasFilter(filterParser, indexMetadata, aliases), aliases);
+        // Determine the enforcement mode for the resolved aliases. If any alias in the set opts into
+        // pre-filtering, the whole filter is applied before scoring so BM25 statistics reflect only the visible subset.
+        // The strongest mode any alias in the set asks for wins, because a request reaching several aliases must not
+        // score over documents that any one of them excludes: filtered_stats outranks pre_filter, which outranks the
+        // historical post_filter.
+        AliasFilter.Enforcement enforcement = AliasFilter.Enforcement.POST_FILTER;
+        if (aliases != null && indexMetadata != null) {
+            for (String alias : aliases) {
+                AliasMetadata aliasMetadata = indexMetadata.getAliases().get(alias);
+                if (aliasMetadata == null) {
+                    continue;
+                }
+                if (AliasFilter.Enforcement.FILTERED_STATS.value().equals(aliasMetadata.enforcement())) {
+                    enforcement = AliasFilter.Enforcement.FILTERED_STATS;
+                    break;
+                }
+                if (AliasFilter.Enforcement.PRE_FILTER.value().equals(aliasMetadata.enforcement())) {
+                    enforcement = AliasFilter.Enforcement.PRE_FILTER;
+                }
+            }
+        }
+        return new AliasFilter(ShardSearchRequest.parseAliasFilter(filterParser, indexMetadata, aliases), enforcement, aliases);
     }
 
     /**
@@ -2522,6 +2570,22 @@ public class IndicesService extends AbstractLifecycleComponent
     // Package-private for testing
     void setMaxSizeInRequestCache(Integer maxSizeInRequestCache) {
         this.maxSizeInRequestCache = maxSizeInRequestCache;
+    }
+
+    // Package-private for testing
+    void setRequestCacheEnabled(boolean requestCacheEnabled) {
+        this.requestCacheEnabled = requestCacheEnabled;
+        if (requestCacheEnabled == false) {
+            // Clean up the same way the clear cache API does
+            threadPool.executor(ThreadPool.Names.GENERIC).execute(() -> {
+                for (IndexService indexService : this) {
+                    for (IndexShard indexShard : indexService) {
+                        indicesRequestCache.clear(new IndexShardCacheEntity(indexShard));
+                    }
+                }
+                indicesRequestCache.forceCleanCache();
+            });
+        }
     }
 
     public void setFixedRefreshIntervalSchedulingEnabled(boolean fixedRefreshIntervalSchedulingEnabled) {
